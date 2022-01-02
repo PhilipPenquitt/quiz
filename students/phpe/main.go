@@ -12,13 +12,11 @@ import (
 	"time"
 )
 
-// - wir wollen eine Datei via Flag öffnen --> erledigt
-// - diese Auslesen und die Fragen speichern --> erledigt
-// - die Fragen durchgehen und prüfen ob die Antworten übereinstimmen --> erledigt
-// Die Fragen sollen optional via Schalter per Zufall ausgegeben werden --> erledigt
-// Nach Ablauf des Timers soll ein Score aller erfolgreicher Fragen angezeigt werden
 var randomize bool
 var filepath string
+var cScore = make(chan string)
+var quit = make(chan bool)
+var timelimit int
 
 type Quiz struct {
 	Question string
@@ -43,28 +41,28 @@ func read_csv(filepath string) (quizfragen []Quiz) {
 	return
 }
 
-func abfragen(quizfragen []Quiz) {
+func request(quizfrage string) {
 	reader := bufio.NewReader(os.Stdin)
-	for _, quizfrage := range quizfragen {
-		fmt.Println("Question:", quizfrage.Question)
-		antwort, _ := reader.ReadString('\n')
-		antwort = strings.Replace(antwort, "\n", "", -1)
-		// Remove \r from Answer when on windows
-		if runtime.GOOS == "windows" {
-			antwort = strings.Replace(antwort, "\r", "", -1)
-		}
-		// We don't want this in part 2 of the Tasks
-		// if quizfrage.Answer == antwort {
-		// fmt.Println("correct")
-		// } else {
-		// fmt.Println("Thats wrong")
-		// }
+	antwort, _ := reader.ReadString('\n')
+	antwort = strings.Replace(antwort, "\n", "", -1)
+	// Remove \r from Answer when on windows
+	if runtime.GOOS == "windows" {
+		antwort = strings.Replace(antwort, "\r", "", -1)
 	}
+	cScore <- antwort
+	return
 }
 
 func init() {
 	flag.BoolVar(&randomize, "randomize", false, "randomize ofer of question")
 	flag.StringVar(&filepath, "file", "problems.csv", "Path to file")
+	flag.IntVar(&timelimit, "timer", 10, "Time for the whole Quiz")
+}
+
+func timer(timelimit int) {
+	time.Sleep(time.Duration(timelimit) * time.Second)
+	quit <- true
+	return
 }
 
 func main() {
@@ -75,11 +73,29 @@ func main() {
 	} else {
 		quizfragen = read_csv("problems.csv")
 	}
+
 	if randomize {
 		rand.Seed(time.Now().UnixNano())
 		rand.Shuffle(len(quizfragen), func(i, j int) {
 			quizfragen[i], quizfragen[j] = quizfragen[j], quizfragen[i]
 		})
 	}
-	abfragen(quizfragen)
+
+	score := 0
+	overall := len(quizfragen)
+	for _, quizfrage := range quizfragen {
+		fmt.Println("Question:", quizfrage.Question)
+		go timer(timelimit)
+		go request(quizfrage.Answer)
+
+		select {
+		case answer := <-cScore:
+			if answer == quizfrage.Answer {
+				score += 1
+			}
+		case <-quit:
+			fmt.Printf("\nGame Over, your Score:%d/%d\n", score, overall)
+			os.Exit(0)
+		}
+	}
 }
